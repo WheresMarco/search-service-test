@@ -1,0 +1,275 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Black-box smoke test of the HTTP API: talks to a real server over HTTP, like a client would.
+ *
+ *   bin/smoke-test                       # starts its own server (temp DB, fixed clock), runs checks, stops it
+ *   bin/smoke-test --url=http://host:port  # runs against an already running server
+ *
+ * Exit code 0 when every check passes, 1 otherwise.
+ *
+ * The data-specific checks assume a freshly seeded database and a "now" before 2026-10-23.
+ * In the default mode this is guaranteed via BOOKING_DB / BOOKING_NOW.
+ */
+
+declare(strict_types=1);
+
+const FIXED_NOW = '2026-10-11T12:00:00+02:00';
+const SEARCH = '/search?service=massage&lat=59.3293&lng=18.0686&from=2026-10-23&to=2026-10-26';
+
+if (!extension_loaded('curl')) {
+    fwrite(STDERR, "bin/smoke-test needs the curl extension.\n");
+    exit(2);
+}
+
+$options = getopt('', ['url:']);
+$server = null;
+
+if (isset($options['url'])) {
+    $baseUrl = rtrim($options['url'], '/');
+    echo "Testing $baseUrl (assumes a fresh database and a clock before 2026-10-23)\n\n";
+} else {
+    [$server, $baseUrl, $dbFile] = startServer(dirname(__DIR__));
+    register_shutdown_function(function () use ($server, $dbFile): void {
+        proc_terminate($server);
+        proc_close($server);
+        @unlink($dbFile);
+    });
+    echo "Started server at $baseUrl (BOOKING_NOW=" . FIXED_NOW . ", temporary database)\n\n";
+}
+
+// ---------------------------------------------------------------------------------------------
+// Checks. Each one throws on failure; the runner below reports and counts.
+// ---------------------------------------------------------------------------------------------
+
+$checks = [];
+
+$checks['search: massage matches 3 services at the nearest venue, sorted by distance'] = function () use ($baseUrl): void {
+    [$status, $body] = http($baseUrl, 'GET', SEARCH);
+    expect($status === 200, "status $status");
+    $pairs = array_map(fn ($r) => $r['venue']['id'] . ':' . $r['service']['id'], $body['results']);
+    expect($pairs === ['1:101', '1:102', '1:103'], 'got ' . implode(', ', $pairs));
+    $distances = array_column($body['results'], 'distanceKm');
+    $sorted = $distances;
+    sort($sorted);
+    expect($distances === $sorted, 'results not sorted by distance');
+};
+
+$checks['search: venue without position is reported under "excluded"'] = function () use ($baseUrl): void {
+    [, $body] = http($baseUrl, 'GET', SEARCH);
+    expect(($body['excluded'][0]['venue']['id'] ?? null) === 4, 'Studio Norr not in excluded');
+    expect(($body['excluded'][0]['reason'] ?? null) === 'missing_position', 'wrong reason');
+};
+
+$checks['search: existing bookings and breaks are not offered (Anna, 2026-10-23)'] = function () use ($baseUrl): void {
+    $starts = slotStarts($baseUrl, SEARCH, 101, 1001, '2026-10-23');
+    expect(($starts[0] ?? null) === '09:00', 'first slot should be 09:00, got ' . ($starts[0] ?? 'none'));
+    expect(($starts[1] ?? null) === '13:00', 'second slot should be 13:00 (after b1, b2 and the break), got ' . ($starts[1] ?? 'none'));
+};
+
+$checks['search: cancelled booking b3 does not block (Erik, 2026-10-24 10:00)'] = function () use ($baseUrl): void {
+    $starts = slotStarts($baseUrl, SEARCH, 102, 1002, '2026-10-24');
+    expect(in_array('10:00', $starts, true), '10:00 missing');
+    expect(end($starts) === '14:15', 'last slot should end at venue closing (15:00), got start ' . end($starts));
+};
+
+$checks['search: overlapping bookings on the DST day (Sara, 2026-10-25)'] = function () use ($baseUrl): void {
+    [, $body] = http($baseUrl, 'GET', '/search?service=mass%C3%B6r&lat=59.33&lng=18.02&from=2026-10-25&to=2026-10-25');
+    $first = $body['results'][0]['slots'][0]['start'] ?? null;
+    expect($first === '2026-10-25T09:30:00+01:00', "first slot should be 09:30+01:00, got $first");
+};
+
+$checks['search: no match is 200 with empty results'] = function () use ($baseUrl): void {
+    [$status, $body] = http($baseUrl, 'GET', '/search?service=yoga&lat=59.33&lng=18.07&from=2026-10-23&to=2026-10-23');
+    expect($status === 200 && $body['results'] === [], "status $status");
+};
+
+$checks['search: invalid input is 400 validation_error'] = function () use ($baseUrl): void {
+    foreach ([
+        '/search?lat=59&lng=18&from=2026-10-23&to=2026-10-23',
+        '/search?service=a&lat=91&lng=18&from=2026-10-23&to=2026-10-23',
+        '/search?service=a&lat=59&lng=18&from=2026-02-30&to=2026-03-01',
+        '/search?service=a&lat=59&lng=18&from=2026-10-23&to=2026-10-22',
+        '/search?service=a&lat=59&lng=18&from=2026-10-01&to=2026-10-31',
+    ] as $uri) {
+        [$status, $body] = http($baseUrl, 'GET', $uri);
+        expect($status === 400 && ($body['error']['code'] ?? null) === 'validation_error', "$uri gave $status");
+    }
+};
+
+$checks['book: free slot is 201, same slot again is 409, slot disappears from search'] = function () use ($baseUrl): void {
+    $slot = ['venueId' => 1, 'serviceId' => 101, 'staffId' => 1001, 'start' => '2026-10-23T09:00:00+02:00', 'customerName' => 'Smoke Test'];
+    [$status, $body] = http($baseUrl, 'POST', '/bookings', $slot);
+    expect($status === 201, "first booking gave $status: " . json_encode($body));
+    expect($body['booking']['end'] === '2026-10-23T10:00:00+02:00', 'wrong end ' . $body['booking']['end']);
+
+    [$status, $body] = http($baseUrl, 'POST', '/bookings', $slot);
+    expect($status === 409 && $body['error']['code'] === 'slot_taken', "second booking gave $status");
+
+    expect(!in_array('09:00', slotStarts($baseUrl, SEARCH, 101, 1001, '2026-10-23'), true), 'booked slot still offered');
+};
+
+$checks['book: errors map to the documented status codes'] = function () use ($baseUrl): void {
+    $ok = ['venueId' => 1, 'serviceId' => 101, 'staffId' => 1001, 'start' => '2026-10-23T14:00:00+02:00', 'customerName' => 'Smoke Test'];
+    $cases = [
+        [400, 'validation_error', '{not json'],
+        [400, 'validation_error', ['start' => '2026-10-23T14:00:00'] + $ok],
+        [400, 'validation_error', ['customerName' => '  '] + $ok],
+        [404, 'not_found', ['staffId' => 9999] + $ok],
+        [422, 'slot_not_offered', ['start' => '2026-10-23T12:00:00+02:00'] + $ok],
+        [422, 'slot_not_offered', ['start' => '2026-10-23T14:05:00+02:00'] + $ok],
+        [422, 'slot_in_past', ['start' => '2026-10-01T09:00:00+02:00'] + $ok],
+        [409, 'slot_taken', ['start' => '2026-10-23T10:00:00+02:00'] + $ok],
+    ];
+    foreach ($cases as [$expectedStatus, $expectedCode, $payload]) {
+        [$status, $body] = http($baseUrl, 'POST', '/bookings', $payload);
+        $code = $body['error']['code'] ?? null;
+        expect($status === $expectedStatus && $code === $expectedCode, "expected $expectedStatus $expectedCode, got $status $code for " . json_encode($payload));
+    }
+};
+
+$checks['routing: unknown route is 404, wrong method is 405, errors are JSON'] = function () use ($baseUrl): void {
+    [$status, $body] = http($baseUrl, 'GET', '/nope');
+    expect($status === 404 && isset($body['error']['code']), "GET /nope gave $status");
+    [$status] = http($baseUrl, 'GET', '/bookings');
+    expect($status === 405, "GET /bookings gave $status");
+};
+
+$checks['concurrency: 10 parallel bookings of one slot give exactly one 201'] = function () use ($baseUrl): void {
+    $statuses = parallelPosts($baseUrl, '/bookings', array_map(
+        fn ($i) => ['venueId' => 2, 'serviceId' => 201, 'staffId' => 2001, 'start' => '2026-10-27T10:00:00+01:00', 'customerName' => "Racer $i"],
+        range(1, 10),
+    ));
+    $counts = array_count_values($statuses);
+    expect(($counts[201] ?? 0) === 1 && ($counts[409] ?? 0) === 9, 'got ' . json_encode($counts));
+};
+
+// ---------------------------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------------------------
+
+$failed = 0;
+foreach ($checks as $name => $check) {
+    try {
+        $check();
+        echo "  ✓ $name\n";
+    } catch (Throwable $e) {
+        $failed++;
+        echo "  ✗ $name\n      {$e->getMessage()}\n";
+    }
+}
+
+$total = count($checks);
+echo "\n" . ($total - $failed) . "/$total checks passed.\n";
+exit($failed === 0 ? 0 : 1);
+
+// ---------------------------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------------------------
+
+function expect(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
+/** @return array{0: int, 1: mixed} status and decoded JSON body */
+function http(string $baseUrl, string $method, string $path, array|string|null $body = null): array
+{
+    $ch = curlHandle($baseUrl, $method, $path, $body);
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        throw new RuntimeException("$method $path failed: " . curl_error($ch));
+    }
+    $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    expect(str_starts_with($contentType, 'application/json'), "$method $path returned Content-Type '$contentType'");
+
+    return [$status, json_decode($raw, true)];
+}
+
+function curlHandle(string $baseUrl, string $method, string $path, array|string|null $body): CurlHandle
+{
+    $ch = curl_init($baseUrl . $path);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+    ]);
+    if ($body !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, is_string($body) ? $body : json_encode($body));
+    }
+
+    return $ch;
+}
+
+/** @return int[] status codes */
+function parallelPosts(string $baseUrl, string $path, array $bodies): array
+{
+    $multi = curl_multi_init();
+    $handles = array_map(fn ($b) => curlHandle($baseUrl, 'POST', $path, $b), $bodies);
+    foreach ($handles as $h) {
+        curl_multi_add_handle($multi, $h);
+    }
+    do {
+        curl_multi_exec($multi, $running);
+        curl_multi_select($multi);
+    } while ($running > 0);
+
+    return array_map(fn ($h) => curl_getinfo($h, CURLINFO_RESPONSE_CODE), $handles);
+}
+
+/** @return string[] local "H:i" start times for one service/staff/day from a search */
+function slotStarts(string $baseUrl, string $searchPath, int $serviceId, int $staffId, string $day): array
+{
+    [, $body] = http($baseUrl, 'GET', $searchPath);
+    $starts = [];
+    foreach ($body['results'] as $result) {
+        if ($result['service']['id'] !== $serviceId) {
+            continue;
+        }
+        foreach ($result['slots'] as $slot) {
+            if ($slot['staffId'] === $staffId && str_starts_with($slot['start'], $day)) {
+                $starts[] = substr($slot['start'], 11, 5);
+            }
+        }
+    }
+
+    return $starts;
+}
+
+/** @return array{0: resource, 1: string, 2: string} process, base URL, temp DB path */
+function startServer(string $root): array
+{
+    // Ask the OS for a free port.
+    $probe = stream_socket_server('tcp://127.0.0.1:0');
+    $port = (int) substr(strrchr(stream_socket_get_name($probe, false), ':'), 1);
+    fclose($probe);
+
+    $dbFile = tempnam(sys_get_temp_dir(), 'booking-smoke-'); // empty file is a valid new SQLite DB
+    $env = [
+        'BOOKING_DB' => $dbFile,
+        'BOOKING_NOW' => FIXED_NOW,
+        'PHP_CLI_SERVER_WORKERS' => '8', // real parallelism for the concurrency check
+    ] + getenv();
+    $process = proc_open(
+        [PHP_BINARY, '-S', "127.0.0.1:$port", '-t', "$root/public", "$root/public/index.php"],
+        [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+        $pipes,
+        $root,
+        $env,
+    );
+    $baseUrl = "http://127.0.0.1:$port";
+
+    for ($i = 0; $i < 50; $i++) {
+        if (@fsockopen('127.0.0.1', $port, timeout: 0.1)) {
+            return [$process, $baseUrl, $dbFile];
+        }
+        usleep(100_000);
+    }
+    fwrite(STDERR, "Server did not start on port $port.\n");
+    exit(2);
+}

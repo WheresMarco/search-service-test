@@ -37,13 +37,21 @@ final class Api
         $this->booking = new BookingService($data, $store);
     }
 
+    /**
+     * Optional environment overrides, used by bin/smoke-test for deterministic black-box runs:
+     *   BOOKING_DB  - SQLite path (default var/bookings.sqlite)
+     *   BOOKING_NOW - fixed "current time", ISO-8601 (default: real time)
+     */
     public static function boot(string $root): self
     {
         $data = DataRepository::fromFile($root . '/data.json');
-        $store = BookingStore::open($root . '/var/bookings.sqlite');
+        $store = BookingStore::open(getenv('BOOKING_DB') ?: $root . '/var/bookings.sqlite');
         $store->seedOnce($data->bookings);
 
-        return new self($data, $store, Clock::now(...));
+        $fixedNow = getenv('BOOKING_NOW');
+        $clock = $fixedNow ? fn () => new DateTimeImmutable($fixedNow) : Clock::now(...);
+
+        return new self($data, $store, $clock);
     }
 
     public function handle(string $method, string $uri, string $body = ''): Response

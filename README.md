@@ -74,3 +74,68 @@ Every error has the form `{"error": {"code": "...", "message": "..."}}`:
 | 422 | `slot_not_offered` / `slot_in_past` | time is outside hours, during a break, off the 15-min grid, or in the past |
 
 Note: slots in the past are never returned, so a search over dates that have already passed returns venues with empty `slots`.
+To run the server as if it were an earlier date, see `BOOKING_NOW` below.
+
+## Testing
+
+There are three layers, from fastest to most thorough.
+
+### 1. Unit and API tests (PHPUnit)
+
+```sh
+vendor/bin/phpunit
+```
+
+These cover availability, booking, search matching and the HTTP layer in-process. They use an in-memory database and a fixed clock.
+
+### 2. Black-box smoke test
+
+```sh
+bin/smoke-test                              # starts its own server, runs 11 checks, stops it
+bin/smoke-test --url=http://localhost:8000  # or test a server that is already running
+```
+
+This talks to a real `php -S` server over HTTP. It covers:
+- the `data.json` edge cases (breaks, a cancelled booking, overlapping bookings, the DST day)
+- validation and error codes
+- booking twice
+- 10 parallel bookings of the same slot
+
+In the default mode it uses a temporary database and `BOOKING_NOW=2026-10-11T12:00:00+02:00`, so the results don't depend on today's date and never touch `var/bookings.sqlite`.
+With `--url`, the server must have a freshly seeded database and a clock before 2026-10-23.
+It exits non-zero if any check fails, so it can run in CI.
+
+The server reads two optional environment variables, which the smoke test uses:
+
+| variable | default | |
+|---|---|---|
+| `BOOKING_DB` | `var/bookings.sqlite` | SQLite file to use |
+| `BOOKING_NOW` | real time | fixed "current time", ISO-8601 with offset |
+
+```sh
+BOOKING_DB=/tmp/demo.sqlite BOOKING_NOW=2026-10-11T12:00:00+02:00 php -S localhost:8000 -t public public/index.php
+```
+
+### 3. Exploratory QA agent (Claude Code)
+
+`.claude/agents/service-tester.md` defines a Claude Code subagent that acts as a QA engineer. It:
+- runs the two layers above
+- starts its own isolated server
+- probes the API for bugs beyond the scripted cases: hand-calculated availability, time zones, input fuzzing, consistency after booking, and concurrent bookings of overlapping slots
+- reports findings with `curl` commands to reproduce them
+
+It never changes repository files.
+
+Run it from Claude Code in the repo root:
+
+```text
+> Use the service-tester agent to test the service
+```
+
+Or run it non-interactively:
+
+```sh
+claude -p "Use the service-tester agent to test the service and report findings"
+```
+
+`/agents` in Claude Code lists the agent. It needs PHP, Composer and `curl` on the PATH.
