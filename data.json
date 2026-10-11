@@ -1,0 +1,102 @@
+{
+  "venues": [
+    {
+      "id": 1,
+      "name": "Salongens Massage",
+      "position": { "lat": 59.3166428, "lng": 18.0561183 },
+      "openingHours": {
+        "mon": ["09:00", "18:00"], "tue": ["09:00", "18:00"], "wed": ["09:00", "18:00"],
+        "thu": ["09:00", "18:00"], "fri": ["09:00", "18:00"], "sat": ["10:00", "15:00"], "sun": null
+      },
+      "services": [
+        { "id": 101, "name": "Klassisk massage", "durationMinutes": 60, "priceSek": 795 },
+        { "id": 102, "name": "Massage", "durationMinutes": 45, "priceSek": 650 },
+        { "id": 103, "name": "Djupvävnadsmassage", "durationMinutes": 90, "priceSek": 1150 }
+      ],
+      "staff": [
+        {
+          "id": 1001, "name": "Anna", "serviceIds": [101, 102, 103],
+          "workingHours": { "mon": ["09:00", "17:00"], "tue": ["09:00", "17:00"], "wed": ["09:00", "17:00"], "thu": ["09:00", "17:00"], "fri": ["09:00", "17:00"] },
+          "breaks": [{ "days": ["mon", "tue", "wed", "thu", "fri"], "start": "12:00", "end": "13:00" }]
+        },
+        {
+          "id": 1002, "name": "Erik", "serviceIds": [101, 102],
+          "workingHours": { "tue": ["10:00", "18:00"], "wed": ["10:00", "18:00"], "thu": ["10:00", "18:00"], "fri": ["10:00", "18:00"], "sat": ["10:00", "18:00"] },
+          "breaks": []
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Massör Kungsholmen",
+      "position": { "lat": 59.3320299, "lng": 18.0231498 },
+      "openingHours": {
+        "mon": ["08:00", "20:00"], "tue": ["08:00", "20:00"], "wed": ["08:00", "20:00"],
+        "thu": ["08:00", "20:00"], "fri": ["08:00", "20:00"], "sat": ["08:00", "20:00"], "sun": ["08:00", "20:00"]
+      },
+      "services": [
+        { "id": 201, "name": "Massör - 50 min", "durationMinutes": 50, "priceSek": 700 }
+      ],
+      "staff": [
+        {
+          "id": 2001, "name": "Sara", "serviceIds": [201],
+          "workingHours": { "mon": ["08:00", "20:00"], "tue": ["08:00", "20:00"], "wed": ["08:00", "20:00"], "thu": ["08:00", "20:00"], "fri": ["08:00", "20:00"], "sat": ["08:00", "20:00"], "sun": ["08:00", "20:00"] },
+          "breaks": []
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Klippotek",
+      "position": { "lat": 59.315887, "lng": 18.0811638 },
+      "openingHours": {
+        "mon": ["09:00", "19:00"], "tue": ["09:00", "19:00"], "wed": ["09:00", "19:00"],
+        "thu": ["09:00", "19:00"], "fri": ["09:00", "19:00"], "sat": ["09:00", "19:00"], "sun": null
+      },
+      "services": [
+        { "id": 301, "name": "Herrklippning", "durationMinutes": 30, "priceSek": 450 },
+        { "id": 302, "name": "Damklippning", "durationMinutes": 60, "priceSek": 695 }
+      ],
+      "staff": [
+        {
+          "id": 3001, "name": "Johan", "serviceIds": [301],
+          "workingHours": { "mon": ["09:00", "19:00"], "tue": ["09:00", "19:00"], "wed": ["09:00", "19:00"] },
+          "breaks": []
+        },
+        {
+          "id": 3002, "name": "Lina", "serviceIds": [301, 302],
+          "workingHours": { "mon": ["11:00", "19:00"], "thu": ["09:00", "19:00"], "fri": ["09:00", "19:00"], "sat": ["09:00", "15:00"] },
+          "breaks": []
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Studio Norr",
+      "position": null,
+      "openingHours": {
+        "mon": ["07:00", "21:00"], "tue": ["07:00", "21:00"], "wed": ["07:00", "21:00"],
+        "thu": ["07:00", "21:00"], "fri": ["07:00", "21:00"], "sat": null, "sun": null
+      },
+      "services": [
+        { "id": 401, "name": "Sportmassage", "durationMinutes": 60, "priceSek": 850 }
+      ],
+      "staff": [
+        {
+          "id": 4001, "name": "Mikael", "serviceIds": [401],
+          "workingHours": { "mon": ["07:00", "21:00"], "tue": ["07:00", "21:00"], "wed": ["07:00", "21:00"], "thu": ["07:00", "21:00"], "fri": ["07:00", "21:00"] },
+          "breaks": []
+        }
+      ]
+    }
+  ],
+  "bookings": [
+    { "id": "b1", "staffId": 1001, "serviceId": 101, "start": "2026-10-23T10:00:00+02:00", "end": "2026-10-23T11:00:00+02:00", "status": "confirmed" },
+    { "id": "b2", "staffId": 1001, "serviceId": 103, "start": "2026-10-23T11:00:00+02:00", "end": "2026-10-23T12:30:00+02:00", "status": "confirmed" },
+    { "id": "b3", "staffId": 1002, "serviceId": 102, "start": "2026-10-24T10:00:00+02:00", "end": "2026-10-24T10:45:00+02:00", "status": "cancelled" },
+    { "id": "b4", "staffId": 2001, "serviceId": 201, "start": "2026-10-25T08:00:00+01:00", "end": "2026-10-25T08:50:00+01:00", "status": "confirmed" },
+    { "id": "b5", "staffId": 2001, "serviceId": 201, "start": "2026-10-25T08:30:00+01:00", "end": "2026-10-25T09:20:00+01:00", "status": "confirmed" },
+    { "id": "b6", "staffId": 3001, "serviceId": 301, "start": "2026-10-26T09:00:00Z", "end": "2026-10-26T09:30:00Z", "status": "confirmed" },
+    { "id": "b7", "staffId": 3002, "serviceId": 302, "start": "2026-10-26T13:00:00+01:00", "end": "2026-10-26T14:00:00+01:00", "status": "confirmed" }
+  ]
+}
