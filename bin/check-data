@@ -1,0 +1,16 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use App\Data\DataIntegrity;
+use App\Data\DataRepository;
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$issues = DataIntegrity::check(DataRepository::fromFile($argv[1] ?? __DIR__ . '/../data.json'));
+foreach ($issues as $issue) {
+    echo "- $issue\n";
+}
+echo count($issues) . " issue(s) found.\n";
+exit($issues === [] ? 0 : 1);
