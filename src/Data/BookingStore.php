@@ -32,11 +32,18 @@ final class BookingStore
         return new self(new PDO('sqlite:' . $path));
     }
 
-    /** Imports the data.json bookings the first time the database is created. */
+    /**
+     * Imports the data.json bookings the first time the database is created. Runs on every request,
+     * so the already-seeded case is a plain read; the write lock is only taken while unseeded, and the
+     * flag is re-checked under it in case a concurrent request seeded first.
+     */
     public function seedOnce(array $bookings): void
     {
+        if ($this->isSeeded()) {
+            return;
+        }
         $this->transaction(function () use ($bookings): void {
-            if ($this->pdo->query("SELECT 1 FROM meta WHERE key = 'seeded'")->fetchColumn()) {
+            if ($this->isSeeded()) {
                 return;
             }
             foreach ($bookings as $booking) {
@@ -76,6 +83,11 @@ final class BookingStore
 
             return true;
         });
+    }
+
+    private function isSeeded(): bool
+    {
+        return (bool) $this->pdo->query("SELECT 1 FROM meta WHERE key = 'seeded'")->fetchColumn();
     }
 
     private function insert(Booking $booking): void

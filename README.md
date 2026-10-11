@@ -9,17 +9,26 @@ Requires PHP >= 8.2 with `pdo_sqlite` and `mbstring` (both are in the default PH
 
 ```sh
 composer install
-php -S localhost:8000 -t public public/index.php     # or: composer serve
+php -S localhost:8000 -t public public/index.php     # or: composer serve (runs in the foreground)
+```
+
+In another terminal:
+
+```sh
 vendor/bin/phpunit                                    # or: composer test
 bin/check-data                                        # reports inconsistencies in data.json
 ```
+
+`bin/check-data` exits 1 whenever it finds issues. The shipped `data.json` has known, accepted issues (see `DECISIONS.md`), so it exits 1 on it.
 
 On the first request, `var/bookings.sqlite` is created and seeded with the bookings from `data.json`.
 Delete that file to reset the database, or after `data.json` changes.
 
 ## API
 
-All times are `Europe/Stockholm`. Responses give ISO-8601 times with offset; requests may use any offset.
+All times are `Europe/Stockholm`. Responses give ISO-8601 times with offset.
+Request times must include an offset as `Z` or `±HH:MM`, and seconds are optional: `2026-10-23T09:00:00+02:00` and `2026-10-23T07:00Z` are both accepted.
+Fractional seconds (`.000Z`, as JavaScript's `toISOString()` produces) and compact offsets (`+0200`, `+02`) are rejected with 400.
 
 ### `GET /search`
 
@@ -67,11 +76,13 @@ Every error has the form `{"error": {"code": "...", "message": "..."}}`:
 
 | status | code | when |
 |---|---|---|
-| 400 | `validation_error` | missing or malformed input (including a `start` without an offset) |
-| 404 | `not_found` | unknown venue, service or staff, or one that doesn't belong to the venue |
+| 400 | `validation_error` | missing or malformed input, a body that isn't a JSON object, or a `start` without an offset |
+| 404 | `not_found` | unknown venue, service or staff, or a service or staff member that isn't at that venue |
 | 405 / 404 | `method_not_allowed` / `not_found` | wrong method or route |
 | 409 | `slot_taken` | slot already booked (also if lost to a concurrent request) |
-| 422 | `slot_not_offered` / `slot_in_past` | time is outside hours, during a break, off the 15-min grid, or in the past |
+| 422 | `slot_not_offered` | the staff member doesn't perform the service, or the time is outside hours, during a break or off the 15-min grid |
+| 422 | `slot_in_past` | the start time is in the past |
+| 500 | `internal_error` | unexpected server error (details go to the server log) |
 
 Note: slots in the past are never returned, so a search over dates that have already passed returns venues with empty `slots`.
 To run the server as if it were an earlier date, see `BOOKING_NOW` below.
